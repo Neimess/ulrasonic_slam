@@ -114,9 +114,9 @@ def laser():
 
 rospy.init_node('laser', anonymous=True)
 # rospy.Subscriber('/sonar', Float64MultiArray, callback)
-rospy.Subscriber('/sonar_center', Float64, callback_left)
-rospy.Subscriber('/sonar_left', Float64, callback_center)
-rospy.Subscriber('sonar_right', Float64, callback_right)
+rospy.Subscriber('/sonar_center', UInt16, callback_left)
+rospy.Subscriber('/sonar_left', UInt16, callback_center)
+rospy.Subscriber('sonar_right', UInt16, callback_right)
 
 if __name__ == '__main__':
     try:
