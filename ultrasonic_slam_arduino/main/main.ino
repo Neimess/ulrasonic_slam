@@ -7,10 +7,9 @@
 
 #include <ros.h>
 #include <geometry_msgs/Twist.h>
-#include <std_msgs/String.h>
 #include <std_msgs/Float32.h>
 #include <std_msgs/UInt16.h>
-#include <geometry_msgs/Vector3Stamped.h>
+#include <geometry_msgs/Vector3.h>
 #include <Servo.h>
 #include <PID_v1.h>
 #include <ros/time.h>
@@ -20,7 +19,7 @@ ros::NodeHandle nh;
 
 // Motor A connections
 #define EN_L 6
-#define IN1_L  2
+#define IN1_L  7
 #define IN2_L 12
 // Motor B connections
 #define EN_R 5
@@ -37,6 +36,10 @@ ros::NodeHandle nh;
 
 // --- Robot-specific constants ---
 #define LOOPTIME                      100     //Looptime in millisecond
+
+#define PIN_ENCODER_RIGHT 2
+#define PIN_ENCODER_LEFT 3
+
 const byte noCommLoopMax = 10;                //number of main loops the robot will execute without communication before stopping
 unsigned int noCommLoops = 0;                 //main loop without communication counter
 unsigned long lastMilli = 0;
@@ -68,7 +71,10 @@ double speed_cmd_right = 0;                   //Command speed for right wheel in
 const float speed_to_pwm_ratio = 0.00235;    //Ratio to convert speed (in m/s) to PWM value. It was obtained by plotting the wheel speed in relation to the PWM motor command (the value is the slope of the linear function).
 const float min_speed_cmd = 0.282;          //(min_speed_cmd/speed_to_pwm_ratio) is the minimum command value needed for the motor to start moving. This value was obtained by plotting the wheel speed in relation to the PWM motor command (the value is the constant of the linear function).
 const float max_speed = 0.4;
+const byte encoder_cpr = 120;                //Encoder ticks or counts per rotation
 
+volatile float pos_left = 0;       //Left motor encoder position
+volatile float pos_right = 0;      //Right motor encoder position
 
 PID PID_leftMotor(&speed_act_left, &speed_cmd_left, &speed_req_left, PID_left_param[0], PID_left_param[1], PID_left_param[2], DIRECT);          //Setting up the PID for left motor
 PID PID_rightMotor(&speed_act_right, &speed_cmd_right, &speed_req_right, PID_right_param[0], PID_right_param[1], PID_right_param[2], DIRECT);   //Setting up the PID for right motor
@@ -78,10 +84,10 @@ PID PID_rightMotor(&speed_act_right, &speed_cmd_right, &speed_req_right, PID_rig
 std_msgs::UInt16 DistanceCenter;
 std_msgs::UInt16 DistanceLeft;
 std_msgs::UInt16  DistanceRight;
+geometry_msgs::Vector3 speed_msg;                                //create a "speed_msg" ROS message
+ros::Publisher speed_pub("speed", &speed_msg);                          //create a publisher to ROS topic "speed" using the "speed_msg" type
 
-// geometry_msgs::Vector3Stamped speed_msg;                                //create a "speed_msg" ROS message
 // ros::Publisher speed_pub("speed", &speed_msg);                          //create a publisher to ROS topic "speed" using the "speed_msg" type
-
 ros::Publisher pub_sonar_center("sonar_center", &DistanceCenter);
 ros::Publisher pub_sonar_left("sonar_left", &DistanceLeft);
 ros::Publisher pub_sonar_right("sonar_right", &DistanceRight);
@@ -99,6 +105,7 @@ ros::Subscriber<std_msgs::UInt16> sub_servo("servo", servo_cb);
 
 void velCallback(const geometry_msgs::Twist& vel)
 {
+     noCommLoops = 0;
      speed_ang = vel.angular.z;
      speed_lin = vel.linear.x;
 
@@ -126,7 +133,8 @@ void setup() {
   
   nh.advertise(pub_sonar_center);
   nh.advertise(pub_sonar_left);
-  nh.advertise(pub_sonar_right);     
+  nh.advertise(pub_sonar_right);
+  nh.advertise(speed_pub);                  //prepare to publish speed in ROS topic
   nh.subscribe(sub_servo);
   nh.subscribe(sub_wheel);
   servo.attach(servoPin);
@@ -138,6 +146,12 @@ void setup() {
   PID_rightMotor.SetOutputLimits(-max_speed, max_speed);
   PID_leftMotor.SetMode(AUTOMATIC);
   PID_rightMotor.SetMode(AUTOMATIC);
+
+  pinMode(PIN_ENCODER_LEFT, INPUT);
+  attachInterrupt(digitalPinToInterrupt(PIN_ENCODER_LEFT), encoderLeftMotor, FALLING);
+
+  pinMode(PIN_ENCODER_RIGHT, INPUT);
+  attachInterrupt(digitalPinToInterrupt(PIN_ENCODER_RIGHT), encoderRightMotor, FALLING);
 }
 
 
@@ -148,19 +162,55 @@ void loop() {
   if((millis()-lastMilli) >= LOOPTIME)   
   {                                                                           // enter timed loop
   lastMilli = millis();
-  scan();
+  
+  //scan();
+
+  if (abs(pos_left) < 5){                                                   //Avoid taking in account small disturbances
+      speed_act_left = 0;
+    }
+    else {
+      speed_act_left=((pos_left/encoder_cpr)*2*PI)*(1000/LOOPTIME)*wheelRad;           // calculate speed of left wheel
+    }
+    
+    if (abs(pos_right) < 5){                                                  //Avoid taking in account small disturbances
+      speed_act_right = 0;
+    }
+    else {
+    speed_act_right=((pos_right/encoder_cpr)*2*PI)*(1000/LOOPTIME)*wheelRad;          // calculate speed of right wheel
+    }
+    
+  pos_left = 0;
+  pos_right = 0;
+
   speed_cmd_left = constrain(speed_cmd_left, -max_speed, max_speed);
   PID_leftMotor.Compute();
   PWM_leftMotor = constrain(((speed_req_left+sgn(speed_req_left)*min_speed_cmd)/speed_to_pwm_ratio) + (speed_cmd_left/speed_to_pwm_ratio), -255, 255); //
-
+  // if (noCommLoops >= noCommLoopMax) {                   //Stopping if too much time without command
+  //     leftMotor->setSpeed(0);
+  //     leftMotor->run(BRAKE);
+  //   }
+  //   else if (speed_req_left == 0){                        //Stopping
+  //     leftMotor->setSpeed(0);
+  //     leftMotor->run(BRAKE);
+  //   }
+  //   else if (PWM_leftMotor > 0){                          //Going forward
+  //     leftMotor->setSpeed(abs(PWM_leftMotor));
+  //     leftMotor->run(BACKWARD);
+  //   }
+  //   else {                                               //Going backward
+  //     leftMotor->setSpeed(abs(PWM_leftMotor));
+  //     leftMotor->run(FORWARD);
+  //   }
+  
   speed_cmd_right = constrain(speed_cmd_right, -max_speed, max_speed);    
   PID_rightMotor.Compute();                                                 
   // compute PWM value for right motor. Check constant definition comments for more information.
   PWM_rightMotor = constrain(((speed_req_right+sgn(speed_req_right)*min_speed_cmd)/speed_to_pwm_ratio) + (speed_cmd_right/speed_to_pwm_ratio), -255, 255); // 
   MotorR(PWM_rightMotor);    
   MotorL(PWM_leftMotor);
+  publishSpeed(LOOPTIME);
   }
-  }
+}
 
 void scan() {
   digitalWrite(trigPin1, LOW);
@@ -236,6 +286,51 @@ void MotorR(int PWM){
   digitalWrite(IN2_R, speed_req_right > 0);
   analogWrite(EN_R, abs(PWM));
 }
+
 template <typename T> int sgn(T val) {
     return (T(0) < val) - (val < T(0));
+}
+
+
+//Left motor encoder counter
+void encoderLeftMotor() {
+  static int prevStateLeft = LOW;
+  int currentState = digitalRead(PIN_ENCODER_LEFT);
+
+  if (prevStateLeft == LOW && currentState == HIGH) {
+    // Если произошло восхождение, то увеличиваем счетчик
+    pos_left++;
+  } else if (prevStateLeft == HIGH && currentState == LOW) {
+    // Если произошло нисхождение, то уменьшаем счетчик
+    pos_left--;
+  }
+
+  prevStateLeft = currentState;
+}
+
+//Right motor encoder counter
+void encoderRightMotor() {
+  static int prevStateRight = LOW;
+  int currentState = digitalRead(PIN_ENCODER_RIGHT);
+
+  if (prevStateRight == LOW && currentState == HIGH) {
+    // Если произошло восхождение, то увеличиваем счетчик
+    pos_right++;
+  } else if (prevStateRight == HIGH && currentState == LOW) {
+    // Если произошло нисхождение, то уменьшаем счетчик
+    pos_right--;
+  }
+
+  prevStateRight = currentState;
+}
+
+
+// Publish function for odometry, uses a vector type message to send the data (message type is not meant for that but that's easier than creating a specific message type)
+void publishSpeed(double time) {
+  speed_msg.x = speed_act_left;    //left wheel speed (in m/s)
+  speed_msg.y = speed_act_right;   //right wheel speed (in m/s)
+  speed_msg.z = time/1000;         //looptime, should be the same as specified in LOOPTIME (in s)
+  speed_pub.publish(&speed_msg);
+  nh.spinOnce();
+  nh.loginfo("Publishing odometry");
 }
