@@ -13,7 +13,7 @@
 #include <Servo.h>
 #include <PID_v1.h>
 #include <ros/time.h>
-
+#include <math.h>
 ros::NodeHandle nh;
 
 
@@ -56,6 +56,10 @@ int PWM_rightMotor = 0;                    //PWM command for right motor
 
 float speed_ang=0, speed_lin=0;
 
+
+const int numReadings = 5; // количество измерений для медианного фильтра
+int readings[numReadings][3]; // массив для хранения последних измерений
+int index = 0; // индекс текущего измерения
 // PID Parameters
 const float PID_left_param[] = { 0, 0, 0.1 }; //Respectively Kp, Ki and Kd for left motor PID
 const float PID_right_param[] = { 0, 0, 0.1 }; //Respectively Kp, Ki and Kd for right motor PID
@@ -156,6 +160,29 @@ void setup() {
 
 
 
+int getMedian(int values[][3], int size, int sensorIndex) {
+  int sortedValues[numReadings];
+  
+  // копируем значения для указанного датчика во временный массив
+  for (int i = 0; i < size; i++) {
+    sortedValues[i] = values[i][sensorIndex];
+  }
+
+  // сортируем массив значений
+  for (int i = 0; i < size - 1; i++) {
+    for (int j = i + 1; j < size; j++) {
+      if (sortedValues[i] > sortedValues[j]) {
+        // обмен значениями
+        int temp = sortedValues[i];
+        sortedValues[i] = sortedValues[j];
+        sortedValues[j] = temp;
+      }
+    }
+  }
+
+  // выбираем медианное значение
+  return sortedValues[size / 2];
+}
 
 void loop() {
   nh.spinOnce();
@@ -163,28 +190,11 @@ void loop() {
   {                                                                           // enter timed loop
   lastMilli = millis();
   
-  //scan();
+  scan();
 
-  if (abs(pos_left) < 5){                                                   //Avoid taking in account small disturbances
-      speed_act_left = 0;
-    }
-    else {
-      speed_act_left=((pos_left/encoder_cpr)*2*PI)*(1000/LOOPTIME)*wheelRad;           // calculate speed of left wheel
-    }
-    
-    if (abs(pos_right) < 5){                                                  //Avoid taking in account small disturbances
-      speed_act_right = 0;
-    }
-    else {
-    speed_act_right=((pos_right/encoder_cpr)*2*PI)*(1000/LOOPTIME)*wheelRad;          // calculate speed of right wheel
-    }
-    
-  pos_left = 0;
-  pos_right = 0;
-
-  speed_cmd_left = constrain(speed_cmd_left, -max_speed, max_speed);
-  PID_leftMotor.Compute();
-  PWM_leftMotor = constrain(((speed_req_left+sgn(speed_req_left)*min_speed_cmd)/speed_to_pwm_ratio) + (speed_cmd_left/speed_to_pwm_ratio), -255, 255); //
+  // speed_cmd_left = constrain(speed_cmd_left, -max_speed, max_speed);
+  // PID_leftMotor.Compute();
+  // PWM_leftMotor = constrain(((speed_req_left+sgn(speed_req_left)*min_speed_cmd)/speed_to_pwm_ratio) + (speed_cmd_left/speed_to_pwm_ratio), -255, 255); //
   // if (noCommLoops >= noCommLoopMax) {                   //Stopping if too much time without command
   //     leftMotor->setSpeed(0);
   //     leftMotor->run(BRAKE);
@@ -202,50 +212,53 @@ void loop() {
   //     leftMotor->run(FORWARD);
   //   }
   
-  speed_cmd_right = constrain(speed_cmd_right, -max_speed, max_speed);    
-  PID_rightMotor.Compute();                                                 
-  // compute PWM value for right motor. Check constant definition comments for more information.
-  PWM_rightMotor = constrain(((speed_req_right+sgn(speed_req_right)*min_speed_cmd)/speed_to_pwm_ratio) + (speed_cmd_right/speed_to_pwm_ratio), -255, 255); // 
-  MotorR(PWM_rightMotor);    
-  MotorL(PWM_leftMotor);
-  publishSpeed(LOOPTIME);
+  // speed_cmd_right = constrain(speed_cmd_right, -max_speed, max_speed);    
+  // PID_rightMotor.Compute();                                                 
+  // // compute PWM value for right motor. Check constant definition comments for more information.
+  // PWM_rightMotor = constrain(((speed_req_right+sgn(speed_req_right)*min_speed_cmd)/speed_to_pwm_ratio) + (speed_cmd_right/speed_to_pwm_ratio), -255, 255); // 
+  // MotorR(PWM_rightMotor);    
+  // MotorL(PWM_leftMotor);
+  // publishSpeed(LOOPTIME);
   }
 }
 
+
+
 void scan() {
-  digitalWrite(trigPin1, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigPin1, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin1, LOW);
+  
 
-  int durationCenter = pulseIn(echoPin1, HIGH);
-  uint8_t distanceCenter = durationCenter * 0.034 / 2;
+  int distanceLeft = getDistance(trigPin1, echoPin1);
+  int distanceCenter = getDistance(trigPin2, echoPin2);
+  int distanceRight = getDistance(trigPin3, echoPin3);
 
-  digitalWrite(trigPin2, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigPin2, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin2, LOW);
-  int durationLeft = pulseIn(echoPin2, HIGH);
-  uint8_t distanceLeft = durationLeft * 0.034 / 2;
+  readings[index][0] = distanceLeft; // сохранение нового измерения датчика 1
+  readings[index][1] = distanceCenter; // сохранение нового измерения датчика 2
+  readings[index][2] = distanceRight; // сохранение нового измерения датчика 3
+  index = (index + 1) % numReadings; // переход к следующему индексу
+  
+  int medianDistance1 = getMedian(readings, numReadings, 0);
+  int medianDistance2 = getMedian(readings, numReadings, 1);
+  int medianDistance3 = getMedian(readings, numReadings, 2);
 
-  digitalWrite(trigPin3, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigPin3, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin3, LOW);
-  int durationRight = pulseIn(echoPin3, HIGH);
-  uint8_t distanceRight = durationRight * 0.034 / 2;
-
-  DistanceLeft.data = distanceLeft;
-  DistanceCenter.data = distanceCenter;
-  DistanceRight.data = distanceRight;
+  DistanceLeft.data = medianDistance1;
+  DistanceCenter.data = medianDistance2;
+  DistanceRight.data = medianDistance3;
   pub_sonar_center.publish(&DistanceCenter);
   pub_sonar_left.publish(&DistanceLeft);
   pub_sonar_right.publish(&DistanceRight);
 }
 
+int getDistance(int trigPin, int echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  int duration = pulseIn(echoPin, HIGH);
+  uint8_t distance = duration * 0.034 / 2;
+  return distance;
+}
 void Motors_init(){
 
  pinMode(EN_L, OUTPUT);
@@ -326,11 +339,11 @@ void encoderRightMotor() {
 
 
 // Publish function for odometry, uses a vector type message to send the data (message type is not meant for that but that's easier than creating a specific message type)
-void publishSpeed(double time) {
-  speed_msg.x = speed_act_left;    //left wheel speed (in m/s)
-  speed_msg.y = speed_act_right;   //right wheel speed (in m/s)
-  speed_msg.z = time/1000;         //looptime, should be the same as specified in LOOPTIME (in s)
-  speed_pub.publish(&speed_msg);
-  nh.spinOnce();
-  nh.loginfo("Publishing odometry");
-}
+// void publishSpeed(double time) {
+//   speed_msg.x = speed_act_left;    //left wheel speed (in m/s)
+//   speed_msg.y = speed_act_right;   //right wheel speed (in m/s)
+//   speed_msg.z = time/1000;         //looptime, should be the same as specified in LOOPTIME (in s)
+//   speed_pub.publish(&speed_msg);
+//   nh.spinOnce();
+//   nh.loginfo("Publishing odometry");
+// }
