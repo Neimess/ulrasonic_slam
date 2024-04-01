@@ -56,6 +56,7 @@ def laser():
         time_end = rospy.Time.now()
 
         for i in range(0, 60, 5):
+            print(i)
             pub_servo.publish(i)
             time.sleep(scan_time)
 
@@ -80,7 +81,7 @@ def laser():
 
             laser_merged.intensities = []
             pub_laser_merged.publish(laser_merged)
-
+            
         pub_servo.publish(0)
         r.sleep()
 

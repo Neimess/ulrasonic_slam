@@ -36,7 +36,7 @@ ros::NodeHandle nh;
 
 // --- Robot-specific constants ---
 #define LOOPTIME                      100     //Looptime in millisecond
-
+#define SCANLOOP 40
 #define PIN_ENCODER_RIGHT 2
 #define PIN_ENCODER_LEFT 3
 
@@ -57,7 +57,7 @@ int PWM_rightMotor = 0;                    //PWM command for right motor
 float speed_ang=0, speed_lin=0;
 
 
-const int numReadings = 5; // количество измерений для медианного фильтра
+const int numReadings = 3; // количество измерений для медианного фильтра
 int readings[numReadings][3]; // массив для хранения последних измерений
 int index = 0; // индекс текущего измерения
 // PID Parameters
@@ -79,7 +79,7 @@ const byte encoder_cpr = 120;                //Encoder ticks or counts per rotat
 
 volatile float pos_left = 0;       //Left motor encoder position
 volatile float pos_right = 0;      //Right motor encoder position
-
+const int last_scan_time = 0;
 PID PID_leftMotor(&speed_act_left, &speed_cmd_left, &speed_req_left, PID_left_param[0], PID_left_param[1], PID_left_param[2], DIRECT);          //Setting up the PID for left motor
 PID PID_rightMotor(&speed_act_right, &speed_cmd_right, &speed_req_right, PID_right_param[0], PID_right_param[1], PID_right_param[2], DIRECT);   //Setting up the PID for right motor
 
@@ -186,11 +186,13 @@ int getMedian(int values[][3], int size, int sensorIndex) {
 
 void loop() {
   nh.spinOnce();
+  if((millis() - last_scan_time) >= SCANLOOP) {
+  scan();
+  }
   if((millis()-lastMilli) >= LOOPTIME)   
   {                                                                           // enter timed loop
   lastMilli = millis();
   
-  scan();
 
   // speed_cmd_left = constrain(speed_cmd_left, -max_speed, max_speed);
   // PID_leftMotor.Compute();
