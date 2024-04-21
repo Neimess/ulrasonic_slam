@@ -36,7 +36,7 @@ ros::NodeHandle nh;
 
 // --- Robot-specific constants ---
 #define LOOPTIME                      100     //Looptime in millisecond
-#define SCANLOOP 40
+#define SCANLOOP 100
 #define PIN_ENCODER_RIGHT 2
 #define PIN_ENCODER_LEFT 3
 
@@ -79,7 +79,7 @@ const byte encoder_cpr = 120;                //Encoder ticks or counts per rotat
 
 volatile float pos_left = 0;       //Left motor encoder position
 volatile float pos_right = 0;      //Right motor encoder position
-const int last_scan_time = 0;
+long int last_scan_time = 0;
 PID PID_leftMotor(&speed_act_left, &speed_cmd_left, &speed_req_left, PID_left_param[0], PID_left_param[1], PID_left_param[2], DIRECT);          //Setting up the PID for left motor
 PID PID_rightMotor(&speed_act_right, &speed_cmd_right, &speed_req_right, PID_right_param[0], PID_right_param[1], PID_right_param[2], DIRECT);   //Setting up the PID for right motor
 
@@ -111,7 +111,7 @@ void velCallback(const geometry_msgs::Twist& vel)
 {
      noCommLoops = 0;
      speed_ang = vel.angular.z;
-     speed_lin = vel.linear.x;
+     speed_lin = vel.linear.x;              
 
      speed_req_right = speed_lin + speed_ang * (wheelBase/2);
      speed_req_left = speed_lin - speed_ang * (wheelBase/2);
@@ -123,6 +123,35 @@ ros::Subscriber<geometry_msgs::Twist> sub_wheel("cmd_vel" , velCallback);     //
 void Motors_init();
 void MotorL(int Pulse_Width1);
 void MotorR(int Pulse_Width2);
+
+
+// Глобальные переменные для хранения предыдущих сглаженных значений
+double smoothedDistanceLeft = 0.0;
+double smoothedDistanceCenter = 0.0;
+double smoothedDistanceRight = 0.0;
+
+// Параметр для определения степени сглаживания
+const double smoothingFactor = 0.2;
+
+// Функция для обновления сглаженных значений на основе новых измерений
+void updateSmoothedDistances(int distanceLeft, int distanceCenter, int distanceRight) {
+    // Обновление сглаженных значений с использованием экспоненциального скользящего среднего
+    smoothedDistanceLeft = smoothingFactor * distanceLeft + (1.0 - smoothingFactor) * smoothedDistanceLeft;
+    smoothedDistanceCenter = smoothingFactor * distanceCenter + (1.0 - smoothingFactor) * smoothedDistanceCenter;
+    smoothedDistanceRight = smoothingFactor * distanceRight + (1.0 - smoothingFactor) * smoothedDistanceRight;
+}
+
+// Функция для публикации сглаженных значений
+void publishSmoothedDistances() {
+    // Публикация сглаженных значений
+    DistanceLeft.data = smoothedDistanceLeft;
+    DistanceCenter.data = smoothedDistanceCenter;
+    DistanceRight.data = smoothedDistanceRight;
+    pub_sonar_center.publish(&DistanceCenter);
+    pub_sonar_left.publish(&DistanceLeft);
+    pub_sonar_right.publish(&DistanceRight);
+}
+
 
 void setup() {
   nh.initNode();
@@ -160,37 +189,18 @@ void setup() {
 
 
 
-int getMedian(int values[][3], int size, int sensorIndex) {
-  int sortedValues[numReadings];
-  
-  // копируем значения для указанного датчика во временный массив
-  for (int i = 0; i < size; i++) {
-    sortedValues[i] = values[i][sensorIndex];
-  }
 
-  // сортируем массив значений
-  for (int i = 0; i < size - 1; i++) {
-    for (int j = i + 1; j < size; j++) {
-      if (sortedValues[i] > sortedValues[j]) {
-        // обмен значениями
-        int temp = sortedValues[i];
-        sortedValues[i] = sortedValues[j];
-        sortedValues[j] = temp;
-      }
-    }
-  }
-
-  // выбираем медианное значение
-  return sortedValues[size / 2];
-}
 
 void loop() {
   nh.spinOnce();
-  if((millis() - last_scan_time) >= SCANLOOP) {
-  scan();
-  }
+  // if((millis() - last_scan_time) >= SCANLOOP) {
+  
+  // last_scan_time = millis();
+  // }
   if((millis()-lastMilli) >= LOOPTIME)   
-  {                                                                           // enter timed loop
+  {         
+    
+    scan();                                                                  // enter timed loop
   lastMilli = millis();
   
 
@@ -233,21 +243,11 @@ void scan() {
   int distanceCenter = getDistance(trigPin2, echoPin2);
   int distanceRight = getDistance(trigPin3, echoPin3);
 
-  readings[index][0] = distanceLeft; // сохранение нового измерения датчика 1
-  readings[index][1] = distanceCenter; // сохранение нового измерения датчика 2
-  readings[index][2] = distanceRight; // сохранение нового измерения датчика 3
-  index = (index + 1) % numReadings; // переход к следующему индексу
-  
-  int medianDistance1 = getMedian(readings, numReadings, 0);
-  int medianDistance2 = getMedian(readings, numReadings, 1);
-  int medianDistance3 = getMedian(readings, numReadings, 2);
+  // Обновление сглаженных значений
+  updateSmoothedDistances(distanceLeft, distanceCenter, distanceRight);
 
-  DistanceLeft.data = medianDistance1;
-  DistanceCenter.data = medianDistance2;
-  DistanceRight.data = medianDistance3;
-  pub_sonar_center.publish(&DistanceCenter);
-  pub_sonar_left.publish(&DistanceLeft);
-  pub_sonar_right.publish(&DistanceRight);
+  // Публикация сглаженных значений
+  publishSmoothedDistances();
 }
 
 int getDistance(int trigPin, int echoPin) {

@@ -8,7 +8,7 @@ from tf.transformations import euler_from_quaternion
 import numpy as np
 import time
 from itertools import count
-
+import json
 index = count(step=1)  # time counter
 
 pub_laser_left = rospy.Publisher("sonar_laser_left", LaserScan, queue_size=100)
@@ -54,16 +54,16 @@ def laser():
 
     while not rospy.is_shutdown():
         time_end = rospy.Time.now()
+        j = 0
+        for i in range(0, 60, 3):
 
-        for i in range(0, 60, 5):
-            print(i)
             pub_servo.publish(i)
             time.sleep(scan_time)
 
             # Time = next(index)
-            sonar_data_left[i] = data_left
-            sonar_data_center[i] = data_center
-            sonar_data_right[i] = data_right
+            sonar_data_left[j] = data_left
+            sonar_data_center[j] = data_center
+            sonar_data_right[j] = data_right
 
             # Публикация объединенного LaserScan
             laser_merged = LaserScan()
@@ -81,7 +81,7 @@ def laser():
 
             laser_merged.intensities = []
             pub_laser_merged.publish(laser_merged)
-            
+            j += 1
         pub_servo.publish(0)
         r.sleep()
 
